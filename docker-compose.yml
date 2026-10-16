@@ -1,0 +1,14 @@
+# Runs the payment-service API in Docker against the PostgreSQL on your machine.
+# The order-service must also be running (ORDER_SERVICE_URL).
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # Inside Docker, "localhost" is the container; reach your machine through host.docker.internal
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/vandi_payments}
+      ORDER_SERVICE_URL: ${DOCKER_ORDER_SERVICE_URL:-http://host.docker.internal:8001}
+    ports:
+      - "8002:8002"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
