@@ -22,6 +22,7 @@ class BookingInfo:
     payment_status: str
     fee_paise: int
     driver_name: str | None
+    cancel_fee_paise: int = 0
 
 
 class OrderService:
@@ -48,10 +49,12 @@ class OrderService:
         keys = BookingInfo.__dataclass_fields__.keys()
         return BookingInfo(**{k: v for k, v in r.json().items() if k in keys})
 
-    async def mark_paid(self, booking_id: str, payment_id: str, amount_paise: int) -> bool:
+    async def mark_paid(self, booking_id: str, payment_id: str, amount_paise: int, purpose: str = "booking_confirmation") -> bool:
+        """Confirm the booking (₹1) or, for a cancellation fee, cancel it."""
+        path = "cancel-paid" if purpose == "cancellation_fee" else "paid"
         try:
             async with self._client() as c:
-                r = await c.post(f"/internal/bookings/{booking_id}/paid", json={"payment_id": payment_id, "amount_paise": amount_paise})
+                r = await c.post(f"/internal/bookings/{booking_id}/{path}", json={"payment_id": payment_id, "amount_paise": amount_paise})
         except httpx.HTTPError:
             logger.exception("Could not tell the order-service that %s is paid", booking_id)
             return False

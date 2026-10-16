@@ -105,3 +105,36 @@ async def test_razorpay_return_and_webhook(client, orders, monkeypatch):
     r = await client.get(f"/payments/return/{p['id']}", params=good, follow_redirects=False)
     assert r.headers["location"].endswith("payment=paid") and len(orders.paid) == 1
     assert len((await client.get("/admin/payments?booking_id=b-1", headers=ADMIN)).json()) == 1
+
+
+async def test_cancellation_fee_payment_cancels_the_booking(client, orders):
+    from app.core.orders import OrderService
+
+    orders.bookings["b-1"].cancel_fee_paise = 4900
+    cancelled = []
+
+    async def mark_paid(booking_id, payment_id, amount_paise, purpose="booking_confirmation"):
+        cancelled.append((booking_id, amount_paise, purpose))
+        return True
+
+    orders.mark_paid = mark_paid
+    r = await client.post("/payments/booking/b-1/cancel", json={"return_to": "web"}, headers=CUSTOMER)
+    assert r.status_code == 200, r.text
+    p = r.json()
+    assert p["amount_paise"] == 4900 and p["purpose"] == "cancellation_fee"
+    # The ₹1 confirmation is a separate payment
+    assert (await start(client)).json()["id"] != p["id"]
+
+    page = await client.get(f"/mock-checkout/{p['id']}")
+    assert "Cancel booking VOABC123" in page.text and "₹49" in page.text
+    r = await client.post(f"/mock-checkout/{p['id']}", data={"outcome": "paid"}, follow_redirects=False)
+    back = await client.get(r.headers["location"], follow_redirects=False)
+    assert back.headers["location"] == "http://web.test/dashboard?booking=b-1&payment=cancelled"
+    assert cancelled == [("b-1", 4900, "cancellation_fee")]
+
+    # Free cancellations don't go through payments
+    orders.bookings["b-1"].cancel_fee_paise = 0
+    assert (await client.post("/payments/booking/b-1/cancel", json={}, headers=CUSTOMER)).status_code == 409
+    orders.bookings["b-1"].status = "in_progress"
+    orders.bookings["b-1"].cancel_fee_paise = 4900
+    assert (await client.post("/payments/booking/b-1/cancel", json={}, headers=CUSTOMER)).status_code == 409

@@ -12,6 +12,7 @@ class StartPaymentIn(BaseModel):
 class PaymentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
+    purpose: str
     booking_id: str
     booking_reference: str
     amount_paise: int

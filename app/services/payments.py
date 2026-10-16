@@ -16,26 +16,49 @@ logger = logging.getLogger("vandi.payments")
 PAYABLE_BOOKING_STATUSES = ("assigned", "in_progress")
 
 
+CONFIRMATION = "booking_confirmation"
+CANCELLATION = "cancellation_fee"
+
+
 async def start_booking_payment(
-    session: AsyncSession, caller: Caller, booking_id: str, return_to: str, orders: OrderService
+    session: AsyncSession,
+    caller: Caller,
+    booking_id: str,
+    return_to: str,
+    orders: OrderService,
+    purpose: str = CONFIRMATION,
 ) -> Payment:
-    """Create (or reuse) the ₹1 confirmation payment for an assigned booking."""
+    """Create (or reuse) a payment for a booking: the ₹1 confirmation, or the cancellation fee."""
     booking = await orders.booking(booking_id)
     if booking is None or booking.customer_user_id != caller.user_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
-    if booking.payment_status != "unpaid":
-        raise HTTPException(status.HTTP_409_CONFLICT, "This booking is already confirmed")
-    if booking.status not in PAYABLE_BOOKING_STATUSES:
-        raise HTTPException(status.HTTP_409_CONFLICT, "You can pay once a driver is assigned")
+    if purpose == CANCELLATION:
+        if booking.status not in ("pending", "assigned"):
+            raise HTTPException(status.HTTP_409_CONFLICT, f"This booking is {booking.status} and can't be cancelled")
+        if booking.cancel_fee_paise <= 0:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cancelling this booking is free; cancel it directly")
+        amount = booking.cancel_fee_paise
+    else:
+        if booking.payment_status != "unpaid":
+            raise HTTPException(status.HTTP_409_CONFLICT, "This booking is already confirmed")
+        if booking.status not in PAYABLE_BOOKING_STATUSES:
+            raise HTTPException(status.HTTP_409_CONFLICT, "You can pay once a driver is assigned")
+        amount = booking.fee_paise
 
     now = utcnow()
     existing = await session.scalar(
         select(Payment)
-        .where(Payment.booking_id == booking_id, Payment.status == "created")
+        .where(Payment.booking_id == booking_id, Payment.status == "created", Payment.purpose == purpose)
         .order_by(Payment.created_at.desc())
         .limit(1)
     )
-    if existing and existing.expires_at and as_utc(existing.expires_at) > now + timedelta(minutes=3) and existing.return_to == return_to:
+    if (
+        existing
+        and existing.expires_at
+        and as_utc(existing.expires_at) > now + timedelta(minutes=3)
+        and existing.return_to == return_to
+        and existing.amount_paise == amount
+    ):
         return existing  # the customer tapped Pay again: same page
 
     s = get_settings()
@@ -43,7 +66,8 @@ async def start_booking_payment(
         booking_id=booking.id,
         booking_reference=booking.reference,
         customer_user_id=caller.user_id,
-        amount_paise=booking.fee_paise,
+        purpose=purpose,
+        amount_paise=amount,
         provider=s.payment_provider,
         return_to=return_to,
         expires_at=now + timedelta(minutes=s.link_expiry_minutes),
@@ -74,7 +98,7 @@ async def mark_paid(session: AsyncSession, p: Payment, provider_payment_id: str 
 
 async def notify_booking(session: AsyncSession, p: Payment, orders: OrderService) -> None:
     if p.status == "paid" and p.booking_notified_at is None:
-        if await orders.mark_paid(p.booking_id, p.id, p.amount_paise):
+        if await orders.mark_paid(p.booking_id, p.id, p.amount_paise, p.purpose):
             p.booking_notified_at = utcnow()
             await session.commit()
 
@@ -90,7 +114,10 @@ async def mark_failed(session: AsyncSession, p: Payment, reason: str) -> Payment
 def back_to_booking(p: Payment) -> str:
     """Where the customer goes after the payment page: their booking on the website or in the app."""
     s = get_settings()
-    outcome = "paid" if p.status == "paid" else "failed"
+    if p.status != "paid":
+        outcome = "failed"
+    else:
+        outcome = "cancelled" if p.purpose == CANCELLATION else "paid"
     base = s.app_return_url if p.return_to == "app" else f"{s.web_url.rstrip('/')}/dashboard"
     sep = "&" if "?" in base else "?"
     return f"{base}{sep}booking={p.booking_id}&payment={outcome}"

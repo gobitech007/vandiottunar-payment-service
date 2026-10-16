@@ -41,7 +41,8 @@ async def razorpay_create(p: Payment, customer_name: str | None, phone: str, exp
         "currency": p.currency,
         "accept_partial": False,
         "reference_id": p.id,
-        "description": f"Vandi Ottunar booking {p.booking_reference} confirmation",
+        "description": f"Vandi Ottunar booking {p.booking_reference} "
+        + ("cancellation fee" if p.purpose == "cancellation_fee" else "confirmation"),
         "customer": {"name": customer_name or "Customer", "contact": phone},
         "notify": {"sms": False, "email": False},
         "reminder_enable": False,

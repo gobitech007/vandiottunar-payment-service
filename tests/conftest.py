@@ -48,7 +48,7 @@ class FakeOrders(OrderService):
     async def booking(self, booking_id):
         return self.bookings.get(booking_id)
 
-    async def mark_paid(self, booking_id, payment_id, amount_paise):
+    async def mark_paid(self, booking_id, payment_id, amount_paise, purpose="booking_confirmation"):
         if self.down:
             return False
         self.paid.append((booking_id, payment_id, amount_paise))

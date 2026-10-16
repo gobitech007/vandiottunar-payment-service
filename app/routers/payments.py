@@ -38,6 +38,18 @@ async def pay_for_booking(
     return await svc.start_booking_payment(session, caller, booking_id, body.return_to, orders)
 
 
+@router.post("/payments/booking/{booking_id}/cancel", response_model=PaymentOut)
+async def pay_to_cancel(
+    booking_id: str,
+    body: StartPaymentIn,
+    caller: Caller = Depends(customer_only),
+    session: AsyncSession = Depends(get_session),
+    orders: OrderService = Depends(get_orders),
+):
+    """Start the cancellation-fee payment. When it's paid the booking is cancelled."""
+    return await svc.start_booking_payment(session, caller, booking_id, body.return_to, orders, svc.CANCELLATION)
+
+
 @router.get("/payments/{payment_id}", response_model=PaymentOut)
 async def get_payment(
     payment_id: str,
@@ -125,6 +137,7 @@ async def mock_checkout(payment_id: str, session: AsyncSession = Depends(get_ses
     p = await _payment(session, payment_id)
     amount = f"₹{p.amount_paise / 100:g}"
     ref = html.escape(p.booking_reference)
+    what = "Cancel booking" if p.purpose == "cancellation_fee" else "Confirm booking"
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Test payment · Vandi Ottunar</title>
 <style>body{{font-family:system-ui,sans-serif;background:#f7f1e3;margin:0;display:grid;place-items:center;min-height:100vh;color:#1d2420}}
@@ -134,7 +147,7 @@ h1{{font-size:20px;margin:12px 0 4px}} .amt{{font-size:40px;font-weight:900;colo
 button{{font:inherit;font-weight:800;width:100%;min-height:48px;border-radius:10px;border:0;margin-top:10px;cursor:pointer}}
 .pay{{background:#0e3b2e;color:#f7f1e3}} .fail{{background:#fff;border:1.5px solid #a3361a;color:#a3361a}}</style></head>
 <body><form class="card" method="post"><span class="tag">TEST MODE · no real money</span>
-<h1>Confirm booking {ref}</h1><div class="amt">{amount}</div>
+<h1>{what} {ref}</h1><div class="amt">{amount}</div>
 <button class="pay" name="outcome" value="paid">Pay {amount} (test)</button>
 <button class="fail" name="outcome" value="failed">Make the payment fail</button></form></body></html>"""
 

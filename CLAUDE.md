@@ -36,6 +36,7 @@ python -m pytest -q
 ## Feature log
 
 - ₹1 booking confirmation with Razorpay Payment Links, mock checkout for development, return to web or app, webhook backup.
+- Cancellation-fee payments (`purpose=cancellation_fee`, `POST /payments/booking/{id}/cancel`); on success the order-service cancels the booking; return `payment=cancelled`.
 
 ## Vandi Ottunar: the whole project
 
@@ -60,10 +61,12 @@ Domain: vandiottunar.in. Owner: Gobinath (gobitech007). Brand: green `#0E3B2E`, 
 - **Login**: only the user-service issues JWTs (HS256). Every service verifies them with the **same `JWT_SECRET`**. Claims: `sub` (user id), `role` (`driver` | `customer` | `employer` | `admin`), `typ=access`.
 - **Service to service**: `X-Service-Token: <SERVICE_TOKEN>` (same value in every `.env`). Each service exposes `/internal/...` only with that header.
   - order-service → user-service: `GET /internal/drivers?status=approved`, `GET /internal/users/{id}`
-  - payment-service → order-service: `GET /internal/bookings/{id}`, `POST /internal/bookings/{id}/paid`
+  - payment-service → order-service: `GET /internal/bookings/{id}` (incl. `fee_paise`, `cancel_fee_paise`), `POST /internal/bookings/{id}/paid` (₹1 confirmation), `POST /internal/bookings/{id}/cancel-paid` (cancellation fee paid → cancel)
 - **Booking lifecycle** (order-service `BookingStatus`): `pending` → `assigned` (admin manual/auto) → *customer pays ₹1* (`payment_status` `unpaid` → `paid`/`waived`) → `in_progress` (driver enters customer's **start code**) → `completed` (driver enters **end code**), or `cancelled`.
+- **Cancellation fee**: customer cancellations cost `CANCELLATION_FEE_PAISE` (₹49) once a driver is assigned (`CANCELLATION_FEE_APPLIES=assigned|always|never`). The customer pays it through the payment-service (`POST /payments/booking/{id}/cancel`), which then cancels the booking. Admin cancellations are free. Public `GET /bookings/policy` (order-service) gives the fee amounts shown in the policy text.
+- **Booking & cancellation policy**: customers accept it at registration (user-service `CustomerProfile.policy_version`, `CUSTOMER_POLICY_VERSION`; bump it when the text changes and customers must accept again). The order-service refuses bookings from customers who haven't accepted it. Policy text lives in web `i18n.tsx` and mobile `i18n.ts` (`policyPoints`), in both languages.
 - **Privacy rules**: the customer never sees the driver's phone. After paying they get an encrypted WhatsApp link (`/chat/<Fernet token>`) that opens the business WhatsApp number with a 6-digit chat PIN; the relay forwards messages between registered numbers. Aadhaar: only the last 4 digits are stored. GPS points are accepted only between start and end codes and purged after 90 days.
-- **Payment return**: payment-service redirects to `WEB_URL/dashboard?booking=<id>&payment=paid|failed` (web) or `vandiottunar://payment?booking=…&payment=…` (app).
+- **Payment return**: payment-service redirects to `WEB_URL/dashboard?booking=<id>&payment=paid|cancelled|failed` (web) or `vandiottunar://payment?booking=…&payment=…` (app). `cancelled` = cancellation fee paid and booking cancelled.
 
 ### Owner's local setup (Windows)
 
